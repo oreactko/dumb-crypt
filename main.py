@@ -1,4 +1,6 @@
 import os
+import hashlib
+import random
 
 key = b"Zo\xc6T\x95\x9a\xe7ZsC\x16-k\x1e\xdf\x9b"  # os.urandom(16)
 data = "xin chào"
@@ -12,34 +14,61 @@ def init_state(key: bytes):
     return s
 
 
-def round_func(x, state):
-    x ^= state  # XOR
-    x = (x * 73 + 41) & 0xFF  # affine transform
-    x = ((x << 3) | (x >> 5)) & 0xFF  # rotate left
+def gen_iv(key, data):
+    h = hashlib.sha256(key + data).digest()
+    return h[0]
+
+
+def gen_sbox(key):
+    seed = hashlib.sha256(key).digest()
+    rng = random.Random(int.from_bytes(seed, "big"))
+
+    sbox = list(range(256))
+    rng.shuffle(sbox)
+
+    inv = [0] * 256
+    for i, v in enumerate(sbox):
+        inv[v] = i
+
+    return sbox, inv
+
+
+def rotl(x, n):
+    return ((x << n) | (x >> (8 - n))) & 0xFF
+
+
+def round_func(x, state, sbox):
+    x = sbox[x]  # 🔥 SubBytes
+    x = rotl(x, 3)  # 🔥 diffusion
+    x = (x * 73 + 41) & 0xFF  # 🔥 affine
+    x ^= state  # 🔥 AddRoundKey (để cuối)
     return x
 
 
-def inv_round_func(x, state):
-    # undo rotate left → rotate right
-    x = ((x >> 3) | (x << 5)) & 0xFF
+def rotr(x, n):
+    return ((x >> n) | (x << (8 - n))) & 0xFF
 
-    # undo affine: x = (x - 41) * inv(73)
-    inv_73 = pow(73, -1, 256)  # 🔥 nghịch đảo mod 256
+
+def inv_round_func(x, state, inv_sbox):
+    x ^= state
+
+    inv_73 = pow(73, -1, 256)
     x = ((x - 41) * inv_73) & 0xFF
 
-    # undo XOR
-    x ^= state
+    x = rotr(x, 3)
+
+    x = inv_sbox[x]
 
     return x
 
 
 ROUNDS = 4
+sbox, inv_sbox = gen_sbox(key)
 
 
-def encode(data, key):
-    data = data.encode("utf-8")
+def encode(data: bytes, key: bytes, sbox):
     state = init_state(key)
-    iv = os.urandom(1)[0]
+    iv = gen_iv(key, data)
     result = [iv]
     prev = iv
 
@@ -49,7 +78,7 @@ def encode(data, key):
             state = (state ^ prev) & 0xFF
             state = (state * 137 + 13) & 0xFF
 
-            x = round_func(x, state)
+            x = round_func(x, state, sbox)
         result.append(x)
 
         prev = x  # chaining
@@ -57,7 +86,7 @@ def encode(data, key):
     return bytes(result)
 
 
-def decode(encoded, key):
+def decode(encoded, key, inv_sbox):
     prev = encoded[0]
     encoded = encoded[1:]
 
@@ -82,7 +111,7 @@ def decode(encoded, key):
 
         # 🔥 đảo thứ tự round
         for s in reversed(states):
-            x = inv_round_func(x, s)
+            x = inv_round_func(x, s, inv_sbox)
 
         result.append(x)
         prev = enc
@@ -91,7 +120,7 @@ def decode(encoded, key):
 
 
 print(key)
-enc = b"\xb4\xbc\xdb\x0ez^\xba\xadP\x92"
-output = decode(enc, key=key)
+enc = encode(data.encode("utf-8"), key, sbox)
+output = decode(enc, key=key, inv_sbox=inv_sbox)
 print(enc)
 print(output.decode("utf-8"))
