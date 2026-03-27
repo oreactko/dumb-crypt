@@ -4,6 +4,7 @@ import random
 
 key = b"Zo\xc6T\x95\x9a\xe7ZsC\x16-k\x1e\xdf\x9b"  # os.urandom(16)
 data = "xin chào"
+ROUNDS = 4
 
 
 def key_schedule(key, rounds):
@@ -71,9 +72,6 @@ def inv_round_func(x, state, inv_sbox):
     x = inv_sbox[x]
 
     return x
-
-
-ROUNDS = 4
 
 
 def encode(data: bytes, key: bytes, sbox):
