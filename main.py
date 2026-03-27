@@ -6,6 +6,17 @@ key = b"Zo\xc6T\x95\x9a\xe7ZsC\x16-k\x1e\xdf\x9b"  # os.urandom(16)
 data = "xin chào"
 
 
+def key_schedule(key, rounds):
+    keys = []
+    current = key
+
+    for i in range(rounds):
+        current = hashlib.sha256(current + bytes([i])).digest()
+        keys.append(current[0])  # lấy 1 byte cho mỗi round
+
+    return keys
+
+
 def init_state(key: bytes):
     s = 0xA5
     for b in key:
@@ -63,7 +74,6 @@ def inv_round_func(x, state, inv_sbox):
 
 
 ROUNDS = 4
-sbox, inv_sbox = gen_sbox(key)
 
 
 def encode(data: bytes, key: bytes, sbox):
@@ -71,11 +81,12 @@ def encode(data: bytes, key: bytes, sbox):
     iv = gen_iv(key, data)
     result = [iv]
     prev = iv
-
+    round_keys = key_schedule(key, ROUNDS)
     for b in data:
         x = b
-        for _ in range(ROUNDS):
-            state = (state ^ prev) & 0xFF
+        for i in range(ROUNDS):
+            rk = round_keys[i]
+            state = (state ^ prev ^ rk) & 0xFF
             state = (state * 137 + 13) & 0xFF
 
             x = round_func(x, state, sbox)
@@ -92,7 +103,7 @@ def decode(encoded, key, inv_sbox):
 
     state = init_state(key)
     result = []
-
+    round_keys = key_schedule(key, ROUNDS)
     for enc in encoded:
         x = enc
 
@@ -100,8 +111,9 @@ def decode(encoded, key, inv_sbox):
         states = []
         tmp_state = state
 
-        for _ in range(ROUNDS):
-            tmp_state = (tmp_state ^ prev) & 0xFF
+        for i in range(ROUNDS):
+            rk = round_keys[i]
+            tmp_state = (tmp_state ^ prev ^ rk) & 0xFF
             tmp_state = (tmp_state * 137 + 13) & 0xFF
             states.append(tmp_state)
 
@@ -120,6 +132,7 @@ def decode(encoded, key, inv_sbox):
 
 
 print(key)
+sbox, inv_sbox = gen_sbox(key)
 enc = encode(data.encode("utf-8"), key, sbox)
 output = decode(enc, key=key, inv_sbox=inv_sbox)
 print(enc)
