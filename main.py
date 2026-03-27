@@ -4,7 +4,7 @@ import random
 
 key = b"Zo\xc6T\x95\x9a\xe7ZsC\x16-k\x1e\xdf\x9b"  # os.urandom(16)
 data = "xin chào"
-ROUNDS = 4
+ROUNDS = 32
 
 
 def key_schedule(key, rounds):
@@ -49,8 +49,8 @@ def rotl(x, n):
     return ((x << n) | (x >> (8 - n))) & 0xFF
 
 
-def round_func(x, state, sbox):
-    x = sbox[x]  # 🔥 SubBytes
+def round_func(x, state, sbox, rk):
+    x = sbox[x ^ rk]  # 🔥 SubBytes
     x = rotl(x, 3)  # 🔥 diffusion
     x = (x * 73 + 41) & 0xFF  # 🔥 affine
     x ^= state  # 🔥 AddRoundKey (để cuối)
@@ -61,7 +61,7 @@ def rotr(x, n):
     return ((x >> n) | (x << (8 - n))) & 0xFF
 
 
-def inv_round_func(x, state, inv_sbox):
+def inv_round_func(x, state, inv_sbox, rk):
     x ^= state
 
     inv_73 = pow(73, -1, 256)
@@ -70,6 +70,7 @@ def inv_round_func(x, state, inv_sbox):
     x = rotr(x, 3)
 
     x = inv_sbox[x]
+    x ^= rk
 
     return x
 
@@ -87,7 +88,7 @@ def encode(data: bytes, key: bytes, sbox):
             state = (state ^ prev ^ rk) & 0xFF
             state = (state * 137 + 13) & 0xFF
 
-            x = round_func(x, state, sbox)
+            x = round_func(x, state, sbox, rk)
         result.append(x)
 
         prev = x  # chaining
@@ -113,15 +114,15 @@ def decode(encoded, key, inv_sbox):
             rk = round_keys[i]
             tmp_state = (tmp_state ^ prev ^ rk) & 0xFF
             tmp_state = (tmp_state * 137 + 13) & 0xFF
-            states.append(tmp_state)
+            states.append((tmp_state, rk))
 
         # 🔥 update state thật (giống encode)
-        for s in states:
+        for s, rk in states:
             state = s
 
         # 🔥 đảo thứ tự round
-        for s in reversed(states):
-            x = inv_round_func(x, s, inv_sbox)
+        for s, rk in reversed(states):
+            x = inv_round_func(x, s, inv_sbox, rk)
 
         result.append(x)
         prev = enc
