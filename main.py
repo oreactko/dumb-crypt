@@ -26,6 +26,70 @@ def init_state(key: bytes):
     return s
 
 
+def pad(data, block=16):
+    pad_len = block - (len(data) % block)
+    return data + bytes([pad_len] * pad_len)
+
+
+def unpad(data):
+    pad_len = data[-1]
+    return data[:-pad_len]
+
+
+def encrypt_block(block, key, sbox, round_keys):
+    state = init_state(key)
+    prev = 0
+
+    out = []
+
+    for b in block:
+        x = b
+        for i in range(ROUNDS):
+            rk = round_keys[i]
+            state = (state ^ prev ^ rk) & 0xFF
+            state = (state * 137 + 13) & 0xFF
+
+            x = round_func(x, state, sbox, rk)
+
+        out.append(x)
+        prev = x
+
+    return bytes(out)
+
+
+def decrypt_block(block, key, inv_sbox, round_keys):
+    state = init_state(key)
+    prev = 0
+
+    out = []
+
+    for enc in block:
+        x = enc
+
+        states = []
+        tmp_state = state
+
+        for i in range(ROUNDS):
+            rk = round_keys[i]
+            tmp_state = (tmp_state ^ prev ^ rk) & 0xFF
+            tmp_state = (tmp_state * 137 + 13) & 0xFF
+            states.append((tmp_state, rk))
+
+        state = states[-1][0]
+
+        for s, rk in reversed(states):
+            x = inv_round_func(x, s, inv_sbox, rk)
+
+        out.append(x)
+        prev = enc
+
+    return bytes(out)
+
+
+def split_blocks(data, block=16):
+    return [data[i : i + block] for i in range(0, len(data), block)]
+
+
 def gen_iv(key, data):
     h = hashlib.sha256(key + data).digest()
     return h[0]
@@ -75,59 +139,50 @@ def inv_round_func(x, state, inv_sbox, rk):
     return x
 
 
-def encode(data: bytes, key: bytes, sbox):
-    state = init_state(key)
-    iv = gen_iv(key, data)
-    result = [iv]
-    prev = iv
+def encode(data, key, sbox):
+    data = pad(data)
+
+    iv = gen_iv(key, data)  # hoặc random
+    prev_block = bytes([iv] * 16)
+
+    blocks = split_blocks(data)
     round_keys = key_schedule(key, ROUNDS)
-    for b in data:
-        x = b
-        for i in range(ROUNDS):
-            rk = round_keys[i]
-            state = (state ^ prev ^ rk) & 0xFF
-            state = (state * 137 + 13) & 0xFF
 
-            x = round_func(x, state, sbox, rk)
-        result.append(x)
+    result = [bytes([iv])]
 
-        prev = x  # chaining
+    for block in blocks:
+        # XOR với block trước
+        xored = bytes([b ^ p for b, p in zip(block, prev_block)])
 
-    return bytes(result)
+        enc = encrypt_block(xored, key, sbox, round_keys)
+
+        result.append(enc)
+        prev_block = enc
+
+    return b"".join(result)
 
 
 def decode(encoded, key, inv_sbox):
-    prev = encoded[0]
-    encoded = encoded[1:]
+    iv = encoded[0]
+    data = encoded[1:]
 
-    state = init_state(key)
-    result = []
+    blocks = split_blocks(data)
+    prev_block = bytes([iv] * 16)
+
     round_keys = key_schedule(key, ROUNDS)
-    for enc in encoded:
-        x = enc
 
-        # 🔥 lưu lại toàn bộ state của round
-        states = []
-        tmp_state = state
+    result = []
 
-        for i in range(ROUNDS):
-            rk = round_keys[i]
-            tmp_state = (tmp_state ^ prev ^ rk) & 0xFF
-            tmp_state = (tmp_state * 137 + 13) & 0xFF
-            states.append((tmp_state, rk))
+    for block in blocks:
+        dec = decrypt_block(block, key, inv_sbox, round_keys)
 
-        # 🔥 update state thật (giống encode)
-        for s, rk in states:
-            state = s
+        # XOR lại
+        plain = bytes([b ^ p for b, p in zip(dec, prev_block)])
 
-        # 🔥 đảo thứ tự round
-        for s, rk in reversed(states):
-            x = inv_round_func(x, s, inv_sbox, rk)
+        result.append(plain)
+        prev_block = block
 
-        result.append(x)
-        prev = enc
-
-    return bytes(result)
+    return unpad(b"".join(result))
 
 
 print(key)
